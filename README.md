@@ -19,24 +19,33 @@ This project provides a Python script to generate images from text prompts using
 
 ## Setup
 
-1.  **Environment Setup:**
+1.  **Clone the Repository:**
+    ```bash
+    git clone <your-repo-url>
+    cd 2025-Text2Image
+    ```
+
+2.  **Environment Setup:**
     The project is designed to run in a virtual environment.
     ```bash
     python3 -m venv venv
-    source venv/bin/activate
+    source venv/bin/activate  # On Windows: venv\Scripts\activate
     ```
 
-2.  **Install Dependencies:**
+3.  **Install Dependencies:**
     ```bash
     pip install --upgrade pip
-    pip install huggingface_hub python-dotenv Pillow
+    pip install -r requirements.txt
     ```
 
-3.  **Configuration:**
-    Create a `.env` file in the project root and add your Hugging Face token:
-    ```env
-    HF_TOKEN=hf_your_token_here
+4.  **Configuration:**
+    Copy the example environment file and add your Hugging Face token:
+    ```bash
+    cp .env.example .env
+    # Edit .env and replace 'your_huggingface_token_here' with your actual token
     ```
+    
+    Get your token from [Hugging Face Settings](https://huggingface.co/settings/tokens).
 
 ## Usage
 
