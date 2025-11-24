@@ -1,0 +1,237 @@
+from datetime import datetime
+from pathlib import Path
+import json
+
+from flask import Flask, render_template_string, request, send_from_directory, url_for
+
+from generate_image import generate_image, sanitize_filename
+
+app = Flask(__name__)
+
+HTML_TEMPLATE = """
+<!doctype html>
+<title>Text-to-Image</title>
+<style>
+  body { font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin: 2rem; background: #0e1117; color: #f5f6fb; }
+  .container { max-width: 1400px; margin: 0 auto; }
+  form { max-width: 640px; margin-bottom: 2rem; }
+  label { display: block; margin-bottom: .25rem; font-weight: 500; }
+  input, textarea, select { width: 100%; padding: .5rem; margin-bottom: 1rem; border-radius: 6px; border: 1px solid #333; background: #141922; color: inherit; font-family: inherit; }
+  button { padding: .75rem 1.5rem; border: none; border-radius: 6px; background: #0066ff; color: #fff; cursor: pointer; font-weight: 500; }
+  button:hover { background: #0052cc; }
+  .result { margin-top: 1rem; padding: 1rem; border-radius: 8px; background: #161b27; }
+  .error { color: #ff6b6b; }
+  .metadata { background: #1a1f2e; padding: 1rem; border-radius: 6px; margin-top: 1rem; font-family: 'Courier New', monospace; font-size: 0.9em; }
+  .metadata dt { font-weight: bold; color: #8b92a8; margin-top: 0.5rem; }
+  .metadata dd { margin-left: 1rem; color: #d4d7e0; }
+  
+  /* Gallery styles */
+  .gallery-header { margin-top: 3rem; margin-bottom: 1rem; border-top: 2px solid #333; padding-top: 2rem; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1rem; }
+  .gallery-item { background: #161b27; border-radius: 8px; overflow: hidden; transition: transform 0.2s; }
+  .gallery-item:hover { transform: translateY(-4px); }
+  .gallery-item img { width: 100%; height: 200px; object-fit: cover; display: block; }
+  .gallery-info { padding: 1rem; }
+  .gallery-prompt { font-size: 0.9em; margin-bottom: 0.5rem; line-height: 1.4; color: #d4d7e0; }
+  .gallery-meta { font-size: 0.75em; color: #8b92a8; }
+  .gallery-meta span { display: inline-block; margin-right: 0.75rem; }
+  .gallery-link { color: #0066ff; text-decoration: none; font-size: 0.85em; }
+  .gallery-link:hover { text-decoration: underline; }
+</style>
+<div class="container">
+  <h1>Text-to-Image Generator</h1>
+  <p>Enter a prompt (and optional settings) to generate an image using Hugging Face FLUX.1-schnell. Images and metadata are saved to <code>output/</code>.</p>
+  <form method="post">
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt" name="prompt" rows="3" required>{{ prompt or "" }}</textarea>
+
+    <label for="width">Width</label>
+    <input id="width" name="width" type="number" min="256" max="2048" step="32" value="{{ width or 1344 }}">
+
+    <label for="height">Height</label>
+    <input id="height" name="height" type="number" min="256" max="2048" step="32" value="{{ height or 768 }}">
+
+    <label for="steps">Inference Steps (higher = better quality, slower)</label>
+    <input id="steps" name="steps" type="number" min="1" max="50" value="{{ steps or 4 }}">
+
+    <label for="seed">Seed (leave empty for random)</label>
+    <input id="seed" name="seed" type="number" min="0" value="{{ seed or '' }}" placeholder="Random">
+
+    <label for="format">Format</label>
+    <select id="format" name="format">
+      <option value="jpg" {% if format == "jpg" %}selected{% endif %}>JPEG</option>
+      <option value="png" {% if format == "png" %}selected{% endif %}>PNG</option>
+    </select>
+
+    <button type="submit">Generate Image</button>
+  </form>
+
+  {% if message %}
+    <div class="result">
+      <p>{{ message }}</p>
+      {% if image_url %}
+        <p><a href="{{ image_url }}" target="_blank" rel="noreferrer">Open generated image</a></p>
+        <p><img src="{{ image_url }}" alt="Generated image" style="max-width:100%; border-radius:8px;"/></p>
+        
+        {% if metadata %}
+        <div class="metadata">
+          <h3>Generation Metadata</h3>
+          <dl>
+            <dt>Prompt:</dt>
+            <dd>{{ metadata.prompt }}</dd>
+            <dt>Model:</dt>
+            <dd>{{ metadata.model }}</dd>
+            <dt>Resolution:</dt>
+            <dd>{{ metadata.width }}x{{ metadata.height }}</dd>
+            <dt>Inference Steps:</dt>
+            <dd>{{ metadata.num_inference_steps }}</dd>
+            <dt>Seed:</dt>
+            <dd>{{ metadata.seed }}</dd>
+            <dt>Format:</dt>
+            <dd>{{ metadata.format }}</dd>
+            <dt>Timestamp:</dt>
+            <dd>{{ metadata.timestamp }}</dd>
+          </dl>
+        </div>
+        {% endif %}
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <div class="result error">{{ error }}</div>
+  {% endif %}
+
+  <div class="gallery-header">
+    <h2>Recent Generations ({{ gallery_items|length }})</h2>
+  </div>
+  
+  <div class="gallery">
+    {% for item in gallery_items %}
+    <div class="gallery-item">
+      <a href="{{ item.image_url }}" target="_blank">
+        <img src="{{ item.image_url }}" alt="{{ item.metadata.prompt }}" loading="lazy">
+      </a>
+      <div class="gallery-info">
+        <div class="gallery-prompt">{{ item.metadata.prompt }}</div>
+        <div class="gallery-meta">
+          <span>{{ item.metadata.width }}×{{ item.metadata.height }}</span>
+          <span>{{ item.metadata.num_inference_steps }} steps</span>
+          <span>{{ item.metadata.format }}</span>
+        </div>
+        <div style="margin-top: 0.5rem;">
+          <a href="{{ item.image_url }}" class="gallery-link" download>Download</a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+"""
+
+
+def build_output_filename(prompt: str, extension: str) -> Path:
+    """Create a timestamped filename based on the prompt."""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    prompt_slug = sanitize_filename(prompt) or "image"
+    return Path("output") / f"{timestamp}_{prompt_slug}.{extension}"
+
+
+def get_gallery_items(limit=50):
+    """Get recent generated images with their metadata."""
+    output_dir = Path("output")
+    if not output_dir.exists():
+        return []
+    
+    items = []
+    # Get all JSON metadata files
+    json_files = sorted(output_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    
+    for json_file in json_files[:limit]:
+        try:
+            with open(json_file, 'r') as f:
+                metadata = json.load(f)
+            
+            # Check if the corresponding image exists
+            image_file = json_file.with_suffix(f".{metadata.get('format', 'jpg')}")
+            if image_file.exists():
+                items.append({
+                    'metadata': metadata,
+                    'image_url': url_for('serve_image', filename=image_file.name),
+                    'json_url': url_for('serve_image', filename=json_file.name)
+                })
+        except Exception as e:
+            print(f"Error loading {json_file}: {e}")
+            continue
+    
+    return items
+
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    message = None
+    image_url = None
+    error = None
+    metadata = None
+    prompt = request.form.get("prompt", "")
+    width = request.form.get("width", "1344")
+    height = request.form.get("height", "768")
+    steps = request.form.get("steps", "4")
+    seed_str = request.form.get("seed", "")
+    seed = int(seed_str) if seed_str else None
+    format_choice = request.form.get("format", "jpg")
+
+    if request.method == "POST":
+        if not prompt.strip():
+            error = "Prompt must not be empty."
+        else:
+            try:
+                output_path = build_output_filename(prompt, format_choice)
+                output_path.parent.mkdir(exist_ok=True)
+                generate_image(
+                    prompt=prompt,
+                    output_file=output_path,
+                    width=int(width),
+                    height=int(height),
+                    format=format_choice,
+                    num_inference_steps=int(steps),
+                    seed=seed,
+                )
+                image_url = url_for("serve_image", filename=output_path.name)
+                message = f"Saved to {output_path}"
+                
+                # Load metadata
+                metadata_path = output_path.with_suffix('.json')
+                if metadata_path.exists():
+                    with open(metadata_path, 'r') as f:
+                        metadata = json.load(f)
+                        
+            except Exception as exc:
+                error = f"Could not generate image: {exc}"
+
+    # Get gallery items
+    gallery_items = get_gallery_items()
+
+    return render_template_string(
+        HTML_TEMPLATE,
+        prompt=prompt,
+        width=width,
+        height=height,
+        steps=steps,
+        seed=seed,
+        format=format_choice,
+        message=message,
+        image_url=image_url,
+        metadata=metadata,
+        error=error,
+        gallery_items=gallery_items,
+    )
+
+
+@app.route("/output/<path:filename>")
+def serve_image(filename):
+    return send_from_directory("output", filename)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
