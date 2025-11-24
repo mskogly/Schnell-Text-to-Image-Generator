@@ -21,8 +21,8 @@ This project provides a Python script to generate images from text prompts using
 
 1.  **Clone the Repository:**
     ```bash
-    git clone <your-repo-url>
-    cd 2025-Text2Image
+    git clone https://github.com/mskogly/Schnell-Text-to-Image-Generator.git
+    cd Schnell-Text-to-Image-Generator
     ```
 
 2.  **Environment Setup:**
