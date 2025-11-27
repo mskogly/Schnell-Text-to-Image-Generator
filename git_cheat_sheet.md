@@ -5,8 +5,8 @@ Your project is already set up with Git! Here is a simple guide to using it.
 ## Setup for this new location
 Since we moved out of Dropbox, you need to recreate the virtual environment:
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -41,5 +41,5 @@ git pull
 ```
 
 ## Why Git is better than Dropbox here
-- **Ignores `venv`**: Dropbox syncs your virtual environment, which breaks when moving between computers. Git ignores it.
+- **Ignores `.venv`**: Dropbox syncs your virtual environment, which breaks when moving between computers. Git ignores it.
 - **History**: You can undo changes easily.
