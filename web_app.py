@@ -21,6 +21,7 @@ HTML_TEMPLATE = """
   button:hover { background: #0052cc; }
   .result { margin-top: 1rem; padding: 1rem; border-radius: 8px; background: #161b27; }
   .error { color: #ff6b6b; }
+  #model-info { transition: opacity 0.3s; }
   .metadata { background: #1a1f2e; padding: 1rem; border-radius: 6px; margin-top: 1rem; font-family: 'Courier New', monospace; font-size: 0.9em; }
   .metadata dt { font-weight: bold; color: #8b92a8; margin-top: 0.5rem; }
   .metadata dd { margin-left: 1rem; color: #d4d7e0; }
@@ -38,12 +39,44 @@ HTML_TEMPLATE = """
   .gallery-link { color: #0066ff; text-decoration: none; font-size: 0.85em; }
   .gallery-link:hover { text-decoration: underline; }
 </style>
+<script>
+function updateModelInfo() {
+  const modelSelect = document.getElementById('model');
+  const modelInfo = document.getElementById('model-info');
+  const modelName = document.getElementById('model-name');
+  
+  const modelDescriptions = {
+    'black-forest-labs/FLUX.1-schnell': {
+      name: 'FLUX.1-schnell',
+      description: 'Fast generation (~2-4 steps). Good for quick iterations and testing prompts. May occasionally miss details in complex prompts.'
+    },
+    'black-forest-labs/FLUX.1-dev': {
+      name: 'FLUX.1-dev',
+      description: 'Higher quality generation (~50 steps). Better prompt adherence and detail. Takes longer but produces superior results.'
+    },
+    'dall-e-3': {
+      name: 'OpenAI DALL-E 3',
+      description: 'High quality generation from OpenAI. Follows complex prompts very well. Requires OpenAI API key.'
+    }
+  };
+  
+  const selected = modelDescriptions[modelSelect.value];
+  if (selected) {
+    modelInfo.style.opacity = '0';
+    setTimeout(() => {
+      modelName.textContent = selected.name;
+      modelInfo.innerHTML = '<strong>' + selected.name + '</strong>: ' + selected.description;
+      modelInfo.style.opacity = '1';
+    }, 150);
+  }
+}
+</script>
 <div class="container">
   <h1>Text-to-Image Generator</h1>
   <p>Enter a prompt (and optional settings) to generate an image using Hugging Face FLUX.1-schnell. Images and metadata are saved to <code>output/</code>.</p>
   <form method="post">
     <label for="prompt">Prompt</label>
-    <textarea id="prompt" name="prompt" rows="3" required>{{ prompt or "" }}</textarea>
+    <textarea id="prompt" name="prompt" rows="3" required>{{ prompt or "A human and a robot paint a mural together. In the style of a 1900 century realism painting" }}</textarea>
 
     <label for="width">Width</label>
     <input id="width" name="width" type="number" min="256" max="2048" step="32" value="{{ width or 1344 }}">
@@ -56,6 +89,16 @@ HTML_TEMPLATE = """
 
     <label for="seed">Seed (leave empty for random)</label>
     <input id="seed" name="seed" type="number" min="0" value="{{ seed or '' }}" placeholder="Random">
+
+    <label for="model">Model</label>
+    <select id="model" name="model" onchange="updateModelInfo()">
+      <option value="black-forest-labs/FLUX.1-schnell" {% if model == "black-forest-labs/FLUX.1-schnell" %}selected{% endif %}>FLUX.1-schnell (Fast)</option>
+      <option value="black-forest-labs/FLUX.1-dev" {% if model == "black-forest-labs/FLUX.1-dev" %}selected{% endif %}>FLUX.1-dev (Quality)</option>
+      <option value="dall-e-3" {% if model == "dall-e-3" %}selected{% endif %}>OpenAI DALL-E 3</option>
+    </select>
+    <div id="model-info" style="margin-top: 0.5rem; padding: 0.75rem; background: #1a1f2e; border-radius: 6px; font-size: 0.9em; color: #d4d7e0;">
+      <strong id="model-name">FLUX.1-schnell</strong>: Fast generation (~2-4 steps). Good for quick iterations and testing prompts.
+    </div>
 
     <label for="format">Format</label>
     <select id="format" name="format">
@@ -180,6 +223,7 @@ def index():
     seed_str = request.form.get("seed", "")
     seed = int(seed_str) if seed_str else None
     format_choice = request.form.get("format", "jpg")
+    model_choice = request.form.get("model", "black-forest-labs/FLUX.1-schnell")
 
     if request.method == "POST":
         if not prompt.strip():
@@ -196,6 +240,7 @@ def index():
                     format=format_choice,
                     num_inference_steps=int(steps),
                     seed=seed,
+                    model=model_choice,
                 )
                 image_url = url_for("serve_image", filename=output_path.name)
                 message = f"Saved to {output_path}"
@@ -220,6 +265,7 @@ def index():
         steps=steps,
         seed=seed,
         format=format_choice,
+        model=model_choice,
         message=message,
         image_url=image_url,
         metadata=metadata,
