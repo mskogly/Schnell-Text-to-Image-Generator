@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 import json
 
-from flask import Flask, render_template_string, request, send_from_directory, url_for
+from flask import Flask, render_template_string, request, send_from_directory, url_for, jsonify
 
 from generate_image import generate_image, sanitize_filename
 
@@ -38,6 +38,9 @@ HTML_TEMPLATE = """
   .gallery-meta span { display: inline-block; margin-right: 0.75rem; }
   .gallery-link { color: #0066ff; text-decoration: none; font-size: 0.85em; }
   .gallery-link:hover { text-decoration: underline; }
+  .delete-btn { background: #dc3545; color: white; border: none; padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer; font-size: 0.85em; margin-left: 0.5rem; }
+  .delete-btn:hover { background: #c82333; }
+  .gallery-actions { margin-top: 0.5rem; display: flex; align-items: center; }
 </style>
 <script>
 function updateModelInfo() {
@@ -69,6 +72,36 @@ function updateModelInfo() {
       modelInfo.style.opacity = '1';
     }, 150);
   }
+}
+
+function deleteImage(filename) {
+  if (!confirm('Are you sure you want to delete this image? This will remove both the image and its metadata.')) {
+    return;
+  }
+  
+  fetch('/delete/' + encodeURIComponent(filename), {
+    method: 'DELETE'
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      // Remove the gallery item from the DOM
+      const galleryItem = document.querySelector(`[data-filename="${filename}"]`);
+      if (galleryItem) {
+        galleryItem.style.opacity = '0';
+        setTimeout(() => galleryItem.remove(), 300);
+      }
+      // Update the count
+      const header = document.querySelector('.gallery-header h2');
+      const currentCount = parseInt(header.textContent.match(/\d+/)[0]);
+      header.textContent = `Recent Generations (${currentCount - 1})`;
+    } else {
+      alert('Error deleting image: ' + data.error);
+    }
+  })
+  .catch(error => {
+    alert('Error deleting image: ' + error);
+  });
 }
 </script>
 <div class="container">
@@ -151,7 +184,7 @@ function updateModelInfo() {
   
   <div class="gallery">
     {% for item in gallery_items %}
-    <div class="gallery-item">
+    <div class="gallery-item" data-filename="{{ item.filename }}">
       <a href="{{ item.image_url }}" target="_blank">
         <img src="{{ item.image_url }}" alt="{{ item.metadata.prompt }}" loading="lazy">
       </a>
@@ -162,8 +195,9 @@ function updateModelInfo() {
           <span>{{ item.metadata.num_inference_steps }} steps</span>
           <span>{{ item.metadata.format }}</span>
         </div>
-        <div style="margin-top: 0.5rem;">
+        <div class="gallery-actions">
           <a href="{{ item.image_url }}" class="gallery-link" download>Download</a>
+          <button class="delete-btn" onclick="deleteImage('{{ item.filename }}')">Delete</button>
         </div>
       </div>
     </div>
@@ -201,7 +235,8 @@ def get_gallery_items(limit=50):
                 items.append({
                     'metadata': metadata,
                     'image_url': url_for('serve_image', filename=image_file.name),
-                    'json_url': url_for('serve_image', filename=json_file.name)
+                    'json_url': url_for('serve_image', filename=json_file.name),
+                    'filename': image_file.name
                 })
         except Exception as e:
             print(f"Error loading {json_file}: {e}")
@@ -279,5 +314,36 @@ def serve_image(filename):
     return send_from_directory("output", filename)
 
 
+@app.route("/delete/<path:filename>", methods=["DELETE"])
+def delete_image(filename):
+    """Delete an image and its corresponding JSON metadata file."""
+    try:
+        output_dir = Path("output")
+        image_path = output_dir / filename
+        
+        # Security check: ensure the file is within the output directory
+        if not image_path.resolve().is_relative_to(output_dir.resolve()):
+            return jsonify({"success": False, "error": "Invalid file path"}), 400
+        
+        # Check if image exists
+        if not image_path.exists():
+            return jsonify({"success": False, "error": "Image file not found"}), 404
+        
+        # Determine the JSON metadata file path
+        json_path = image_path.with_suffix('.json')
+        
+        # Delete the image file
+        image_path.unlink()
+        
+        # Delete the JSON metadata file if it exists
+        if json_path.exists():
+            json_path.unlink()
+        
+        return jsonify({"success": True, "message": "Image and metadata deleted successfully"})
+    
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5001, debug=True)
