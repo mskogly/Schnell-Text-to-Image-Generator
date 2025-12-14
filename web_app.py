@@ -4,7 +4,7 @@ import json
 
 from flask import Flask, render_template_string, request, send_from_directory, url_for, jsonify
 
-from generate_image import generate_image, sanitize_filename
+from generate_image import generate_image, sanitize_filename, check_huggingface_status
 
 app = Flask(__name__)
 
@@ -74,6 +74,37 @@ function updateModelInfo() {
   }
 }
 
+function checkStatus() {
+  const btn = document.getElementById('status-btn');
+  const statusDisplay = document.getElementById('api-status');
+  const modelSelect = document.getElementById('model');
+  
+  if (modelSelect.value === 'dall-e-3') {
+     statusDisplay.innerHTML = '<span style="color: #4dabf7">ℹ️ DALL-E 3 is a paid service (OpenAI)</span>';
+     return;
+  }
+  
+  btn.disabled = true;
+  statusDisplay.innerHTML = 'Checking...';
+  
+  fetch('/api_status?model=' + encodeURIComponent(modelSelect.value))
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false;
+      if (data.status === 'available') {
+        statusDisplay.innerHTML = '<span style="color: #40c057">🟢 Service Available</span>';
+      } else if (data.status === 'limit') {
+        statusDisplay.innerHTML = '<span style="color: #ff6b6b">🔴 Rate Limited/Quota Exceeded</span>';
+      } else {
+        statusDisplay.innerHTML = '<span style="color: #ff6b6b">🔴 Error: ' + data.message + '</span>';
+      }
+    })
+    .catch(e => {
+      btn.disabled = false;
+      statusDisplay.innerHTML = '<span style="color: #ff6b6b">Error checking status</span>';
+    });
+}
+
 function deleteImage(filename) {
   if (!confirm('Are you sure you want to delete this image? This will remove both the image and its metadata.')) {
     return;
@@ -131,6 +162,25 @@ function deleteImage(filename) {
     </select>
     <div id="model-info" style="margin-top: 0.5rem; padding: 0.75rem; background: #1a1f2e; border-radius: 6px; font-size: 0.9em; color: #d4d7e0;">
       <strong id="model-name">FLUX.1-schnell</strong>: Fast generation (~2-4 steps). Good for quick iterations and testing prompts.
+    </div>
+
+    <div style="margin-top: 1rem; padding: 1rem; background: #1a1f2e; border: 1px solid #333; border-radius: 6px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
+            <label style="margin:0">API Status Check</label>
+            <button type="button" id="status-btn" onclick="checkStatus()" style="padding: 0.25rem 0.5rem; font-size: 0.8em; background: #333;">Check Now</button>
+        </div>
+        <div id="api-status" style="font-size: 0.9em; min-height: 1.2em; margin-bottom: 1rem;">Click 'Check Now' to probe HuggingFace API</div>
+        
+        <div style="display: flex; align-items: start; gap: 0.5rem; border-top: 1px solid #333; padding-top: 0.75rem;">
+            <input type="checkbox" id="allow_fallback" name="allow_fallback" value="true" style="width: auto; margin-top: 0.25rem;">
+            <div>
+                <label for="allow_fallback" style="margin-bottom: 0.2rem; display: inline-block;">Allow OpenAI Fallback</label>
+                <div style="font-size: 0.8em; color: #8b92a8;">
+                    If unchecked, generation will FAIL if Hugging Face is limited/down. <br>
+                    Check this if you are willing to pay for DALL-E 3 fallback.
+                </div>
+            </div>
+        </div>
     </div>
 
     <label for="format">Format</label>
@@ -259,6 +309,7 @@ def index():
     seed = int(seed_str) if seed_str else None
     format_choice = request.form.get("format", "jpg")
     model_choice = request.form.get("model", "black-forest-labs/FLUX.1-schnell")
+    allow_fallback = request.form.get("allow_fallback") == "true"
 
     if request.method == "POST":
         if not prompt.strip():
@@ -276,6 +327,7 @@ def index():
                     num_inference_steps=int(steps),
                     seed=seed,
                     model=model_choice,
+                    allow_fallback=allow_fallback,
                 )
                 image_url = url_for("serve_image", filename=output_path.name)
                 message = f"Saved to {output_path}"
@@ -312,6 +364,13 @@ def index():
 @app.route("/output/<path:filename>")
 def serve_image(filename):
     return send_from_directory("output", filename)
+
+
+@app.route("/api_status")
+def api_status():
+    model = request.args.get("model", "black-forest-labs/FLUX.1-schnell")
+    result = check_huggingface_status(model)
+    return jsonify(result)
 
 
 @app.route("/delete/<path:filename>", methods=["DELETE"])

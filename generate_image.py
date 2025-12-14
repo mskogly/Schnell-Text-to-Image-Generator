@@ -21,7 +21,36 @@ def sanitize_filename(text, max_length=50):
     # Truncate to max length
     return safe[:max_length].strip('_')
 
-def generate_image(prompt, output_file=None, width=1344, height=768, format="jpg", num_inference_steps=4, seed=None, model="black-forest-labs/FLUX.1-schnell"):
+def check_huggingface_status(model="black-forest-labs/FLUX.1-schnell"):
+    """
+    Check if the Hugging Face model is available by attempting a lightweight generation.
+    Returns: {"status": "available" | "error" | "limit", "message": str}
+    """
+    hf_token = os.getenv("HF_TOKEN")
+    if not hf_token:
+        return {"status": "error", "message": "No HF_TOKEN found"}
+        
+    try:
+        from huggingface_hub import InferenceClient
+        client = InferenceClient(token=hf_token)
+        
+        # lightweight probe
+        client.text_to_image(
+            "test", 
+            model=model,
+            width=256,
+            height=256,
+            num_inference_steps=1
+        )
+        return {"status": "available", "message": "Service is responding"}
+        
+    except Exception as e:
+        error_msg = str(e)
+        if '402' in error_msg or 'Payment Required' in error_msg or 'exceeded' in error_msg.lower():
+            return {"status": "limit", "message": "Quota exceeded or payment required"}
+        return {"status": "error", "message": error_msg[:100]}
+
+def generate_image(prompt, output_file=None, width=1344, height=768, format="jpg", num_inference_steps=4, seed=None, model="black-forest-labs/FLUX.1-schnell", allow_fallback=False):
     """
     Generate an image using Hugging Face (primary) or OpenAI DALL-E (fallback).
     
@@ -113,6 +142,12 @@ def generate_image(prompt, output_file=None, width=1344, height=768, format="jpg
         if model != "dall-e-3":
             print("⚠ [HuggingFace] No HF_TOKEN found, skipping to OpenAI")
     
+    # Check if fallback is allowed
+    if not allow_fallback and model != "dall-e-3":
+        # If we are here, it means HF failed (or wasn't attempted) AND model is not explicitly DALL-E 3
+        # AND fallback is disabled.
+        raise ValueError("Hugging Face generation failed and OpenAI fallback is disabled.")
+
     # Fallback to OpenAI
     openai_key = os.getenv("OPENAI_API_KEY")
     if not openai_key:
@@ -207,6 +242,8 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=4, help="Number of inference steps (default: 4, higher = better quality but slower)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (default: random)")
     
+    parser.add_argument("--allow-fallback", action="store_true", help="Allow fallback to OpenAI if Hugging Face fails")
+    
     args = parser.parse_args()
     
-    generate_image(args.prompt, args.output, args.width, args.height, args.format, args.steps, args.seed)
+    generate_image(args.prompt, args.output, args.width, args.height, args.format, args.steps, args.seed, allow_fallback=args.allow_fallback)
